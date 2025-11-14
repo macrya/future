@@ -1,0 +1,301 @@
+// Prisma schema for delivery tracking system
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [postgis]
+}
+
+enum UserRole {
+  CUSTOMER
+  DRIVER
+  ADMIN
+}
+
+enum DeliveryStatus {
+  PENDING
+  SEARCHING_DRIVER
+  DRIVER_ASSIGNED
+  DRIVER_ARRIVED
+  PICKED_UP
+  IN_TRANSIT
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  MPESA
+  CARD
+  CASH
+}
+
+enum DriverStatus {
+  OFFLINE
+  ONLINE
+  BUSY
+}
+
+enum VehicleType {
+  MOTORCYCLE
+  CAR
+  VAN
+  TRUCK
+}
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  phone         String    @unique
+  password      String
+  firstName     String
+  lastName      String
+  role          UserRole
+  avatar        String?
+  isVerified    Boolean   @default(false)
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  customer      Customer?
+  driver        Driver?
+  refreshTokens RefreshToken[]
+  notifications Notification[]
+
+  @@index([email])
+  @@index([phone])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+}
+
+model Customer {
+  id             String    @id @default(uuid())
+  userId         String    @unique
+  defaultAddress String?
+  latitude       Float?
+  longitude      Float?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  // Relations
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveries Delivery[]
+  reviews    Review[]
+
+  @@index([userId])
+}
+
+model Driver {
+  id                String       @id @default(uuid())
+  userId            String       @unique
+  vehicleType       VehicleType
+  vehicleModel      String
+  vehiclePlate      String       @unique
+  licenseNumber     String       @unique
+  status            DriverStatus @default(OFFLINE)
+  currentLatitude   Float?
+  currentLongitude  Float?
+  rating            Float        @default(0)
+  totalDeliveries   Int          @default(0)
+  isApproved        Boolean      @default(false)
+  bankAccount       String?
+  idDocument        String?
+  licenseDocument   String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  // Relations
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveries Delivery[]
+  reviews    Review[]
+  earnings   Earning[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([currentLatitude, currentLongitude])
+}
+
+model Delivery {
+  id                  String         @id @default(uuid())
+  customerId          String
+  driverId            String?
+
+  // Pickup details
+  pickupAddress       String
+  pickupLatitude      Float
+  pickupLongitude     Float
+  pickupContactName   String
+  pickupContactPhone  String
+
+  // Delivery details
+  deliveryAddress     String
+  deliveryLatitude    Float
+  deliveryLongitude   Float
+  deliveryContactName String
+  deliveryContactPhone String
+
+  // Package details
+  packageDescription  String
+  packageWeight       Float?
+  packageValue        Float?
+
+  // Status and tracking
+  status              DeliveryStatus @default(PENDING)
+  distance            Float?
+  estimatedDuration   Int?
+  estimatedCost       Float
+  actualCost          Float?
+
+  // Timestamps
+  scheduledPickupTime DateTime?
+  driverAssignedAt    DateTime?
+  pickedUpAt          DateTime?
+  deliveredAt         DateTime?
+  cancelledAt         DateTime?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  // Special instructions
+  notes               String?
+  signature           String?
+  proofOfDelivery     String?
+
+  // Relations
+  customer    Customer           @relation(fields: [customerId], references: [id])
+  driver      Driver?            @relation(fields: [driverId], references: [id])
+  payment     Payment?
+  tracking    DeliveryTracking[]
+  review      Review?
+
+  @@index([customerId])
+  @@index([driverId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model DeliveryTracking {
+  id         String   @id @default(uuid())
+  deliveryId String
+  latitude   Float
+  longitude  Float
+  status     String
+  notes      String?
+  createdAt  DateTime @default(now())
+
+  delivery Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+
+  @@index([deliveryId])
+  @@index([createdAt])
+}
+
+model Payment {
+  id              String        @id @default(uuid())
+  deliveryId      String        @unique
+  amount          Float
+  method          PaymentMethod
+  status          PaymentStatus @default(PENDING)
+
+  // M-Pesa specific
+  mpesaCode       String?
+  mpesaPhone      String?
+  mpesaRequestId  String?
+
+  // Card specific
+  stripePaymentId String?
+  cardLast4       String?
+
+  transactionId   String?       @unique
+  failureReason   String?
+  paidAt          DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  delivery Delivery @relation(fields: [deliveryId], references: [id])
+
+  @@index([deliveryId])
+  @@index([status])
+  @@index([transactionId])
+}
+
+model Review {
+  id         String   @id @default(uuid())
+  deliveryId String   @unique
+  customerId String
+  driverId   String
+  rating     Int
+  comment    String?
+  createdAt  DateTime @default(now())
+
+  delivery Delivery @relation(fields: [deliveryId], references: [id])
+  customer Customer @relation(fields: [customerId], references: [id])
+  driver   Driver   @relation(fields: [driverId], references: [id])
+
+  @@index([driverId])
+  @@index([customerId])
+}
+
+model Earning {
+  id         String   @id @default(uuid())
+  driverId   String
+  amount     Float
+  commission Float
+  netAmount  Float
+  isPaid     Boolean  @default(false)
+  paidAt     DateTime?
+  createdAt  DateTime @default(now())
+
+  driver Driver @relation(fields: [driverId], references: [id])
+
+  @@index([driverId])
+  @@index([isPaid])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  title     String
+  message   String
+  type      String
+  isRead    Boolean  @default(false)
+  data      Json?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isRead])
+}
+
+model SystemConfig {
+  id           String   @id @default(uuid())
+  key          String   @unique
+  value        String
+  description  String?
+  updatedAt    DateTime @updatedAt
+
+  @@index([key])
+}
